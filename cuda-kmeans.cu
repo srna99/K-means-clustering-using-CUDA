@@ -5,6 +5,13 @@
 #include <iostream>
 #include "libarff/arff_parser.h"
 #include "libarff/arff_data.h"
+// #include <bits/stdc++.h>
+#include <cuda_runtime.h>
+#ifdef __CDT_PARSER__
+#define __global__
+#define __device__
+#define __shared__
+#endif
 
 using namespace std;
 
