@@ -11,9 +11,10 @@ using namespace std;
 
 float CalculateDistance(ArffInstance *a, float *b) {
     float sum = 0;
+    float diff;
     
     for(int i = 0; i < a->size() - 1; i++) {
-        float diff = a->get(i)->operator float() - b[i];
+        diff = a->get(i)->operator float() - b[i];
         sum += diff * diff;
     }
     
