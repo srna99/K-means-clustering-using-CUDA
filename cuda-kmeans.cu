@@ -28,44 +28,44 @@ __device__ float CalculateDistance(float *a, float *b, int size) {
     return sum;
 }
 
-__global__ void AssignClusters(float *dataset, float *centroids, int *clusters, int k, int num_inst, int num_attr) {
+__global__ void AssignClusters(float *dataset, float *centroids, int *clusters, int k, int numInst, int numAttr) {
     for(int i = 0; i < num_inst; i++) {
-        float min_distance = FLT_MAX;
+        float minDistance = FLT_MAX;
 
         for(int j = 0; j < k; j++) {
-            float dist = CalculateDistance(dataset[i], &centroids[j * (num_attr - 1)]);
+            float dist = CalculateDistance(dataset[i], &centroids[j * (numAttr - 1)]);
 
-            if(dist < min_distance) {
-                min_distance = dist;
+            if(dist < minDistance) {
+                minDistance = dist;
                 clusters[i] = j;
             }
         }
     }
 }
 
-__global__ void CalculateClusterMeans(float *dataset, float *centroids, int *clusters, int k, int num_inst, int num_attr) {
-    for(int i = 0; i < num_inst; i++) {
-        for(int j = 0; j < num_attr; j++) {
-            sumOfValues[clusters[i] * num_attr + j] += dataset[i * num_attr + j];
+__global__ void CalculateClusterMeans(float *dataset, float *centroids, int *clusters, int k, int numInst, int numAttr) {
+    for(int i = 0; i < numInst; i++) {
+        for(int j = 0; j < numAttr; j++) {
+            sumOfValues[clusters[i] * numAttr + j] += dataset[i * numAttr + j];
         }
 
         clusterSize[clusters[i]]++;
     }
 
-    for(int i = 0; i < k * num_attr; i++) {
-        float newCentroid = sumOfValues[i] / clusterSize[(int) (i / num_attr)];
+    for(int i = 0; i < k * numAttr; i++) {
+        float newCentroid = sumOfValues[i] / clusterSize[(int) (i / numAttr)];
 
         centroidDiffs[i] = abs(centroids[i] - newCentroid);
 
         centroids[i] = newCentroid;
-        printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / num_attr) + 1, i % num_attr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / num_attr)]);
+        printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / numAttr) + 1, i % numAttr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / numAttr)]);
     }
 }
 
 int main(int argc, char *argv[]) {
     if(argc != 3)
     {
-        cout << "Usage: ./kmeans datasets/dataset.arff k" << endl;
+        cout << "Usage: ./cuda-kmeans datasets/dataset.arff k" << endl;
         exit(0);
     }
 
@@ -78,50 +78,50 @@ int main(int argc, char *argv[]) {
     ArffParser parser(argv[1]);
     ArffData *dataset = parser.parse();
 
-    int num_attr = dataset->num_attributes() - 1;
-    int num_inst = dataset->num_instances();
+    int numAttr = dataset->num_attributes() - 1;
+    int numInst = dataset->num_instances();
 
     // Allocate host memory
-    float *h_datapoints = (float *) malloc(num_inst * num_attr * sizeof(float));
-    float *h_centroids = (float *) malloc(k * num_attr * sizeof(float));
-    int *h_clusters = (int *) malloc(num_inst * sizeof(int));
+    float *h_dataset = (float *) malloc(numInst * numAttr * sizeof(float));
+    float *h_centroids = (float *) malloc(k * numAttr * sizeof(float));
+    int *h_clusters = (int *) malloc(numInst * sizeof(int));
 
-    for(int i = 0; i < num_inst; i++) {
-        for(int j = 0; j < num_attr; j++) {
-            h_datapoints[i * num_attr + j] = dataset->get_instance(i)->get(j)->operator float();
+    for(int i = 0; i < numInst; i++) {
+        for(int j = 0; j < numAttr; j++) {
+            h_dataset[i * numAttr + j] = dataset->get_instance(i)->get(j)->operator float();
         }
     }
 
     // Initialize centroids as random datapoints
     for(int i = 0; i < k; i++) {
-        int rand_point = rand() % (num_inst + 1);
+        int randPoint = rand() % (numInst + 1);
 
-        for(int j = 0; j < num_attr; j++) {
-            h_centroids[i * num_attr + j] = h_datapoints[rand_point * num_attr + j];
+        for(int j = 0; j < numAttr; j++) {
+            h_centroids[i * numAttr + j] = h_dataset[randPoint * numAttr + j];
         }
     }
 
     // Allocate device memory
-    float *d_datapoints
+    float *d_dataset;
     float *d_centroids;
     int *d_clusters;
-    float *d_sumOfValues
+    float *d_sumOfValues;
     // float *d_centroidDiffs;
     int *d_clusterSizes;
 
-    cudaMalloc(&d_datapoints, num_inst * num_attr * sizeof(float));
-    cudaMalloc(&d_centroids, k * num_attr * sizeof(float));
-    cudaMalloc(&d_clusters, num_inst * sizeof(int));
-    cudaMalloc(&d_sumOfValues, k * num_attr * sizeof(float));
+    cudaMalloc(&d_dataset, numInst * numAttr * sizeof(float));
+    cudaMalloc(&d_centroids, k * numAttr * sizeof(float));
+    cudaMalloc(&d_clusters, numInst * sizeof(int));
+    cudaMalloc(&d_sumOfValues, k * numAttr * sizeof(float));
     // cudaMalloc(&d_centroidDiffs, k * num_attr, sizeof(float));
     cudaMalloc(&d_clusterSizes, k * sizeof(int));
 
-    cudaMemset(d_sumOfValues, 0, k * num_attr * sizeof(float));
+    cudaMemset(d_sumOfValues, 0, k * numAttr * sizeof(float));
     cudaMemset(d_clusterSizes, 0, k * sizeof(int));
 
     // Transfer host memory to device memory
-    cudaMemcpy(d_datapoints, h_datapoints, num_inst * num_attr * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_centroids, h_centroids, k * num_attr * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_dataset, h_dataset, numInst * numAttr * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_centroids, h_centroids, k * numAttr * sizeof(float), cudaMemcpyHostToDevice);
     // cudaMemcpy(d_clusters, h_clusters, num_inst * sizeof(int), cudaMemcpyHostToDevice);
 
     float milliseconds = 0;
@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
     cudaEventRecord(start);
 
     int threadsPerBlock = 256;
-    int gridSize = (num_inst + threadsPerBlock - 1) / threadsPerBlock;
+    int gridSize = (numInst + threadsPerBlock - 1) / threadsPerBlock;
 
     int iteration = 0;
 
@@ -140,9 +140,12 @@ int main(int argc, char *argv[]) {
     while(iteration < 150) {
         printf("----------------------- ITERATION %d ---------------------------\n", iteration);
 
-        AssignClusters<<<gridSize, threadsPerBlock>>>(d_datapoints, d_centroids, d_clusters, k, num_inst, num_attr);
+        AssignClusters<<<gridSize, threadsPerBlock>>>(d_dataset, d_centroids, d_clusters, k, numInst, numAttr);
 
-        CalculateClusterMeans<<<gridSize, threadsPerBlock>>>(d_datapoints, d_centroids, d_clusters, d_sumOfValues, d_clusterSizes, k, num_inst, num_attr);
+        cudaMemset(d_sumOfValues, 0, k * numAttr * sizeof(float));
+        cudaMemset(d_clusterSizes, 0, k * sizeof(int));
+
+        CalculateClusterMeans<<<gridSize, threadsPerBlock>>>(d_dataset, d_centroids, d_clusters, d_sumOfValues, d_clusterSizes, k, numInst, numAttr);
 
         iteration++;
     }
@@ -152,7 +155,7 @@ int main(int argc, char *argv[]) {
     cudaEventElapsedTime(&milliseconds, start, stop);
 
     // Transfer device memory to host memory
-    cudaMemcpy(h_clusters, d_clusters, num_inst * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_clusters, d_clusters, numInst * sizeof(int), cudaMemcpyDeviceToHost);
 
     cudaError_t cudaError = cudaGetLastError();
   
@@ -161,15 +164,15 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf("It took %llu ms to process %d datapoints into %d clusters.\n", milliseconds, num_inst, k);
+    printf("It took %llu ms to process %d datapoints into %d clusters.\n", milliseconds, numInst, k);
 
-    cudaFree(d_datapoints);
+    cudaFree(d_dataset);
     cudaFree(d_centroids);
     cudaFree(d_clusters);
     cudaFree(d_sumOfValues);
-    cudaFree(d_centroidDiffs);
+    // cudaFree(d_centroidDiffs);
     cudaFree(d_clusterSizes);
-    free(h_datapoints);
+    free(h_dataset);
     free(h_centroids);
     free(h_clusters);
 }
