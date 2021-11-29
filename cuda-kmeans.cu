@@ -10,7 +10,8 @@
 using namespace std;
 
 
-#define THREADS_PER_BLOCK 256
+#define THREADS_PER_BLOCK_DATA 256
+#define THREADS_PER_BLOCK_CENTROIDS 32
 
 // Calculate distance from one datapoint to another
 __device__ float CalculateDistance(float *a, float *b, int size) {
@@ -48,20 +49,20 @@ __global__ void CalculateClusterSumsAndSizes(float *dataset, int *clusters, floa
     extern __shared__ int sharedMemory[];
 
     int *sharedClusters = sharedMemory;
-    float *sharedDataset = (float *) &sharedMemory[THREADS_PER_BLOCK];
+    float *sharedDataset = (float *) &sharedMemory[THREADS_PER_BLOCK_DATA];
 
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
     int th_idx = threadIdx.x;
     
     if(tid < numInst) {
         for(int i = 0; i < numAttr; i++) {
-            sharedDataset[th_idx + i] = dataset[tid * numAttr + i];
+            sharedDataset[th_idx * numAttr + i] = dataset[tid * numAttr + i];
         }
 
-        sharedClusters[th_idx] = clusterSizes[tid];
+        sharedClusters[th_idx] = clusters[tid];
     } else {
         for(int i = 0; i < numAttr; i++) {
-            sharedDataset[th_idx + i] = 0;
+            sharedDataset[th_idx * numAttr + i] = 0;
         }
 
         sharedClusters[th_idx] = -1;
@@ -70,11 +71,13 @@ __global__ void CalculateClusterSumsAndSizes(float *dataset, int *clusters, floa
     __syncthreads();
 
     if(th_idx < numAttr) {
-        float attrSum[k] = {0};
+        float attrSum[THREADS_PER_BLOCK_CENTROIDS] = {0};
 
-        for(int i = 0; i < THREADS_PER_BLOCK; i++) {
-            if(sharedClusters[i] != -1) {
-                attrSum[sharedClusters[i]] += sharedDataset[i * numAttr + th_idx];
+        for(int i = 0; i < THREADS_PER_BLOCK_DATA; i++) {
+            int cluster = sharedClusters[i];
+
+            if(cluster != -1) {
+                attrSum[cluster] += sharedDataset[i * numAttr + th_idx];
             }
         }
 
@@ -82,11 +85,13 @@ __global__ void CalculateClusterSumsAndSizes(float *dataset, int *clusters, floa
             atomicAdd(&sumOfCentroids[i * numAttr + th_idx], attrSum[i]);
         }
     } else if(th_idx == numAttr + 1) {
-        int clusterAmounts[k] = {0};
+        int clusterAmounts[THREADS_PER_BLOCK_CENTROIDS] = {0};
 
-        for(int i = 0; i < THREADS_PER_BLOCK; i++) {
-            if(sharedClusters[i] != -1) {
-                clusterSize[sharedClusters[i]]++;
+        for(int i = 0; i < THREADS_PER_BLOCK_DATA; i++) {
+            int cluster = sharedClusters[i];
+
+            if(cluster != -1) {
+                clusterAmounts[cluster] += 1;
             }
         }
 
@@ -94,34 +99,19 @@ __global__ void CalculateClusterSumsAndSizes(float *dataset, int *clusters, floa
             atomicAdd(&clusterSizes[i], clusterAmounts[i]);
         }
     }
-
-    // __syncthreads();
-
-    // if(th_idx == 0) {
-    //     int clusterAmounts[k] = {0};
-
-    //     for(int i = 0; i < THREADS_PER_BLOCK; i++) {
-    //         if(sharedClusters[i] != -1) {
-    //             clusterSize[sharedClusters[i]]++;
-    //         }
-    //     }
-
-    //     for(int i = 0; i < k; i++) {
-    //         atomicAdd(&clusterSizes[i], clusterAmounts[i]);
-    //     }
-    // }
 }
 
 // Calculate means for each cluster for new centroids
-__global__ void CalculateCentroidMeans(float *centroids, float *sumOfCentroids, int *clusterSizes, int k, int numAttr) {
-    // for(int i = 0; i < k * numAttr; i++) {
-    //     float newCentroid = sumOfValues[i] / clusterSize[(int) (i / numAttr)];
+__global__ void CalculateCentroidMeans(float *centroids, float *sumOfCentroids, int *clusterSizes, float *centroidDiffs, int k, int numAttr) {
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
-    //     centroidDiffs[i] = abs(centroids[i] - newCentroid);
+    if(tid < k * numAttr) {
+        float newCentroid = sumOfCentroids[tid] / clusterSizes[(int) (tid / numAttr)];
 
-    //     centroids[i] = newCentroid;
-    //     printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / numAttr) + 1, i % numAttr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / numAttr)]);
-    // }
+        centroidDiffs[tid] = abs(centroids[tid] - newCentroid);
+
+        centroids[tid] = newCentroid;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -147,6 +137,8 @@ int main(int argc, char *argv[]) {
     float *h_dataset = (float *) malloc(numInst * numAttr * sizeof(float));
     float *h_centroids = (float *) malloc(k * numAttr * sizeof(float));
     int *h_clusters = (int *) malloc(numInst * sizeof(int));
+    float *h_centroidDiffs = (float *) malloc(k * numAttr * sizeof(float));;
+    int *h_clusterSizes = (int *) malloc(k * sizeof(int));
 
     for(int i = 0; i < numInst; i++) {
         for(int j = 0; j < numAttr; j++) {
@@ -168,23 +160,23 @@ int main(int argc, char *argv[]) {
     float *d_centroids;
     int *d_clusters;
     float *d_sumOfCentroids;
-    // float *d_centroidDiffs;
+    float *d_centroidDiffs;
     int *d_clusterSizes;
 
     cudaMalloc(&d_dataset, numInst * numAttr * sizeof(float));
     cudaMalloc(&d_centroids, k * numAttr * sizeof(float));
     cudaMalloc(&d_clusters, numInst * sizeof(int));
     cudaMalloc(&d_sumOfCentroids, k * numAttr * sizeof(float));
-    // cudaMalloc(&d_centroidDiffs, k * num_attr, sizeof(float));
+    cudaMalloc(&d_centroidDiffs, k * numAttr * sizeof(float));
     cudaMalloc(&d_clusterSizes, k * sizeof(int));
 
-    cudaMemset(d_sumOfValues, 0, k * numAttr * sizeof(float));
+    cudaMemset(d_sumOfCentroids, 0, k * numAttr * sizeof(float));
+    cudaMemset(d_centroidDiffs, 0, k * numAttr * sizeof(float));
     cudaMemset(d_clusterSizes, 0, k * sizeof(int));
 
     // Transfer host memory to device memory
     cudaMemcpy(d_dataset, h_dataset, numInst * numAttr * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_centroids, h_centroids, k * numAttr * sizeof(float), cudaMemcpyHostToDevice);
-    // cudaMemcpy(d_clusters, h_clusters, num_inst * sizeof(int), cudaMemcpyHostToDevice);
 
     float milliseconds = 0;
     cudaEvent_t start, stop;
@@ -193,26 +185,30 @@ int main(int argc, char *argv[]) {
 
     cudaEventRecord(start);
 
-    int threadsPerBlockForCentroids = 32;
-    int gridSizeForDataset = (numInst + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    int gridSizeForCentroids = (numAttr * k + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    int sharedMemorySize = THREADS_PER_BLOCK * numAttr * sizeof(float) + THREADS_PER_BLOCK * sizeof(int);
+    int gridSizeForDataset = (numInst + THREADS_PER_BLOCK_DATA - 1) / THREADS_PER_BLOCK_DATA;
+    int gridSizeForCentroids = (numAttr * k + THREADS_PER_BLOCK_CENTROIDS - 1) / THREADS_PER_BLOCK_CENTROIDS;
+    int sharedMemorySize = THREADS_PER_BLOCK_DATA * numAttr * sizeof(float) + THREADS_PER_BLOCK_DATA * sizeof(int);
 
     cudaError_t cudaError;
     int iteration = 0;
 
     // Kmeans
-    while(iteration < 150) {
-        printf("----------------------- ITERATION %d ---------------------------\n", iteration);
+    while(iteration < 130) {
+        // printf("----------------------- ITERATION %d ---------------------------\n", iteration);
 
-        AssignClusters<<<gridSizeForDataset, THREADS_PER_BLOCK>>>(d_dataset, d_centroids, d_clusters, k, numInst, numAttr);
+        AssignClusters<<<gridSizeForDataset, THREADS_PER_BLOCK_DATA>>>(d_dataset, d_centroids, d_clusters, k, numInst, numAttr);
 
         cudaMemset(d_sumOfCentroids, 0, k * numAttr * sizeof(float));
+        cudaMemset(d_centroidDiffs, 0, k * numAttr * sizeof(float));
         cudaMemset(d_clusterSizes, 0, k * sizeof(int));
 
-        CalculateClusterSumsAndSizes<<<gridSizeForDataset, THREADS_PER_BLOCK, sharedMemorySize>>>(d_dataset, d_clusters, d_sumOfCentroids, d_clusterSizes, k, numInst, numAttr);
+        CalculateClusterSumsAndSizes<<<gridSizeForDataset, THREADS_PER_BLOCK_DATA, sharedMemorySize>>>(d_dataset, d_clusters, d_sumOfCentroids, d_clusterSizes, k, numInst, numAttr);
 
-        CalculateCentroidMeans<<<gridSizeForCentroids, threadsPerBlockForCentroids>>>(d_centroids, d_sumOfCentroids, d_clusterSizes, k, numAttr);
+        CalculateCentroidMeans<<<gridSizeForCentroids, THREADS_PER_BLOCK_CENTROIDS>>>(d_centroids, d_sumOfCentroids, d_clusterSizes, d_centroidDiffs, k, numAttr);
+
+        // cudaMemcpy(h_centroids, d_centroids, k * numAttr * sizeof(float), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(h_centroidDiffs, d_centroidDiffs, k * numAttr * sizeof(float), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(h_clusterSizes, d_clusterSizes, k * sizeof(int), cudaMemcpyDeviceToHost);
 
         cudaError = cudaGetLastError();
   
@@ -220,6 +216,10 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "cudaGetLastError() returned %d: %s\n", cudaError, cudaGetErrorString(cudaError));
             exit(EXIT_FAILURE);
         }
+
+        // for(int i = 0; i < k * numAttr; i++) {
+        //     printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / numAttr) + 1, i % numAttr, h_centroids[i], h_centroidDiffs[i], h_clusterSizes[(int) (i / numAttr)]);
+        // }
 
         iteration++;
     }
@@ -231,22 +231,17 @@ int main(int argc, char *argv[]) {
     // Transfer device memory to host memory
     cudaMemcpy(h_clusters, d_clusters, numInst * sizeof(int), cudaMemcpyDeviceToHost);
 
-    // cudaError = cudaGetLastError();
-  
-    // if(cudaError != cudaSuccess) {
-    //     fprintf(stderr, "cudaGetLastError() returned %d: %s\n", cudaError, cudaGetErrorString(cudaError));
-    //     exit(EXIT_FAILURE);
-    // }
-
-    printf("It took %llu ms to process %d datapoints into %d clusters.\n", milliseconds, numInst, k);
+    printf("It took %d ms to process %d datapoints into %d clusters.\n", (int) milliseconds, numInst, k);
 
     cudaFree(d_dataset);
     cudaFree(d_centroids);
     cudaFree(d_clusters);
     cudaFree(d_sumOfCentroids);
-    // cudaFree(d_centroidDiffs);
+    cudaFree(d_centroidDiffs);
     cudaFree(d_clusterSizes);
     free(h_dataset);
     free(h_centroids);
     free(h_clusters);
+    free(h_centroidDiffs);
+    free(h_clusterSizes);
 }

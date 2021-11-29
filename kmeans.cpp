@@ -60,7 +60,8 @@ void CalculateClusterMeans(ArffData *dataset, int *clusters, float *centroids, i
         // finished = finished && (centroidDiffs[i] <= 1e-6);
 
         centroids[i] = newCentroid;
-        printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / num_attr) + 1, i % num_attr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / num_attr)]);
+        
+        // printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / num_attr) + 1, i % num_attr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / num_attr)]);
     }
 
     free(sumOfValues);
@@ -106,8 +107,8 @@ int main(int argc, char *argv[]) {
     int iteration = 0;
 
     // Kmeans
-    while(iteration < 150) {
-        printf("----------------------- ITERATION %d ---------------------------\n", iteration);
+    while(iteration < 130) {
+        // printf("----------------------- ITERATION %d ---------------------------\n", iteration);
 
         AssignClusters(dataset, centroids, k, clusters);
 
