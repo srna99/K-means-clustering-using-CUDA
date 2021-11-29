@@ -139,6 +139,7 @@ int main(int argc, char *argv[]) {
     int *h_clusters = (int *) malloc(numInst * sizeof(int));
     float *h_centroidDiffs = (float *) malloc(k * numAttr * sizeof(float));;
     int *h_clusterSizes = (int *) malloc(k * sizeof(int));
+    // int *h_finished = (int *) calloc(1, sizeof(int));
 
     for(int i = 0; i < numInst; i++) {
         for(int j = 0; j < numAttr; j++) {
@@ -162,6 +163,7 @@ int main(int argc, char *argv[]) {
     float *d_sumOfCentroids;
     float *d_centroidDiffs;
     int *d_clusterSizes;
+    // int *d_finished;
 
     cudaMalloc(&d_dataset, numInst * numAttr * sizeof(float));
     cudaMalloc(&d_centroids, k * numAttr * sizeof(float));
@@ -169,6 +171,7 @@ int main(int argc, char *argv[]) {
     cudaMalloc(&d_sumOfCentroids, k * numAttr * sizeof(float));
     cudaMalloc(&d_centroidDiffs, k * numAttr * sizeof(float));
     cudaMalloc(&d_clusterSizes, k * sizeof(int));
+    // cudaMalloc(&d_finished, sizeof(int));
 
     cudaMemset(d_sumOfCentroids, 0, k * numAttr * sizeof(float));
     cudaMemset(d_centroidDiffs, 0, k * numAttr * sizeof(float));
@@ -177,6 +180,7 @@ int main(int argc, char *argv[]) {
     // Transfer host memory to device memory
     cudaMemcpy(d_dataset, h_dataset, numInst * numAttr * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_centroids, h_centroids, k * numAttr * sizeof(float), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_finished, h_finished, sizeof(int), cudaMemcpyHostToDevice);
 
     float milliseconds = 0;
     cudaEvent_t start, stop;
@@ -193,7 +197,7 @@ int main(int argc, char *argv[]) {
     int iteration = 0;
 
     // Kmeans
-    while(iteration < 130) {
+    while(iteration < 120) {
         // printf("----------------------- ITERATION %d ---------------------------\n", iteration);
 
         AssignClusters<<<gridSizeForDataset, THREADS_PER_BLOCK_DATA>>>(d_dataset, d_centroids, d_clusters, k, numInst, numAttr);
@@ -209,6 +213,7 @@ int main(int argc, char *argv[]) {
         // cudaMemcpy(h_centroids, d_centroids, k * numAttr * sizeof(float), cudaMemcpyDeviceToHost);
         // cudaMemcpy(h_centroidDiffs, d_centroidDiffs, k * numAttr * sizeof(float), cudaMemcpyDeviceToHost);
         // cudaMemcpy(h_clusterSizes, d_clusterSizes, k * sizeof(int), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(h_finished, d_finished, sizeof(int), cudaMemcpyDeviceToHost);
 
         cudaError = cudaGetLastError();
   
@@ -231,7 +236,7 @@ int main(int argc, char *argv[]) {
     // Transfer device memory to host memory
     cudaMemcpy(h_clusters, d_clusters, numInst * sizeof(int), cudaMemcpyDeviceToHost);
 
-    printf("It took %d ms to process %d datapoints into %d clusters.\n", (int) milliseconds, numInst, k);
+    printf("It took %d ms to process %d datapoints into %d clusters in %d iterations.\n", (int) milliseconds, numInst, k, iteration);
 
     cudaFree(d_dataset);
     cudaFree(d_centroids);

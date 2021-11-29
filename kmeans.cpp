@@ -60,13 +60,15 @@ void CalculateClusterMeans(ArffData *dataset, int *clusters, float *centroids, i
         // finished = finished && (centroidDiffs[i] <= 1e-6);
 
         centroids[i] = newCentroid;
-        
+
         // printf("Centroid #%d: Attr%d = %f, Diff = %f, Cluster Size = %d\n", (int) (i / num_attr) + 1, i % num_attr, centroids[i], centroidDiffs[i], clusterSize[(int) (i / num_attr)]);
     }
 
     free(sumOfValues);
     free(centroidDiffs);
     free(clusterSize);
+
+    // return finished;
 }
 
 int main(int argc, char *argv[]) {
@@ -105,9 +107,10 @@ int main(int argc, char *argv[]) {
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
     int iteration = 0;
+    // bool finished = false;
 
     // Kmeans
-    while(iteration < 130) {
+    while(iteration < 120) {
         // printf("----------------------- ITERATION %d ---------------------------\n", iteration);
 
         AssignClusters(dataset, centroids, k, clusters);
@@ -121,7 +124,7 @@ int main(int argc, char *argv[]) {
 
     uint64_t diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
 
-    printf("It took %llu ms to process %d datapoints into %d clusters.\n", diff, num_inst, k);
+    printf("It took %llu ms to process %d datapoints into %d clusters in %d iterations.\n", diff, num_inst, k, iteration);
 
     free(centroids);
     free(clusters);
